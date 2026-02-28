@@ -35,3 +35,28 @@ git clone https://github.com/nghialbt/openclaw-memory-system.git
 mkdir -p ~/.codex/skills
 cp -R openclaw-memory-system/openclaw-memory-ops ~/.codex/skills/
 ```
+
+## Architecture + Runbook Files
+- [OpenClaw Memory Architecture Summary (PNG)](docs/assets/OpenClaw_Memory_Architecture_summary.png)
+- [OpenClaw Memory Architecture (PDF)](docs/assets/OpenClaw_Memory_Architecture.pdf)
+- [OpenClaw Memory Runbook (PDF)](docs/assets/OpenClaw_Memory_Runbook.pdf)
+
+## Memory Status Dashboard
+Dashboard URL (default): `http://127.0.0.1:3903/`
+
+### What it shows
+- Status counters: `Active`, `Pending`, `Deprecated`.
+- Data source paths (status dir + runtime `MEMORY.md`) at the top.
+- Filter tabs: `Active`, `Pending`, `Deprecated`, `All`, `Conflicts`.
+- Main table columns: `ID`, `Topic.Key`, `Status`, `Confidence`, `Expires`, `Value`, `Action`.
+- Detail panel (right): JSON view of selected memory/conflict item.
+
+### What you can do
+- Change memory status directly from table (`active/pending/deprecated`) and apply immediately.
+- Review conflicts in `Conflicts` tab.
+- Resolve conflicts with `Keep Left`, `Keep Right`, or `Manual` merge.
+- Trigger full inbox re-scan via `Scan All`.
+- Refresh live state via `Refresh`.
+
+### Screenshot
+![Memory Status Dashboard](docs/assets/Memory_Status_Dashboard.jpg)
