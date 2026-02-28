@@ -1,0 +1,4 @@
+interface:
+  display_name: "OpenClaw Memory Ops"
+  short_description: "Deploy and run OpenClaw memory pipeline"
+  default_prompt: "Set up and operate the OpenClaw memory pipeline end-to-end on this machine, then report status and health checks."

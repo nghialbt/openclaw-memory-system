@@ -60,3 +60,13 @@ Dashboard URL (default): `http://127.0.0.1:3903/`
 
 ### Screenshot
 ![Memory Status Dashboard](docs/assets/Memory_Status_Dashboard.jpg)
+
+## Skill not showing in UI?
+If the skill does not appear in your Skills panel:
+1. Ensure `openclaw-memory-ops/agents/openai.yaml` exists in the installed skill folder.
+2. Re-run installer (install-only mode):
+```bash
+curl -fsSL https://raw.githubusercontent.com/nghialbt/openclaw-memory-system/main/install.sh | \
+  bash -s -- --openclaw-repo /path/to/openclaw --skip-bootstrap --skip-jobs
+```
+3. Restart Codex/OpenClaw app.
