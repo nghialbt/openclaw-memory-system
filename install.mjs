@@ -185,8 +185,25 @@ async function injectRuntimePack(params) {
     return { injected: false, changedPackage: false, copiedScripts: 0, reason: "skip-requested" };
   }
 
-  const manifestPath = path.join(selfDir, "runtime", "openclaw", "memory-runtime-manifest.json");
-  const runtimeScriptsDir = path.join(selfDir, "runtime", "openclaw", "scripts");
+  let manifestPath = path.join(
+    selfDir,
+    "openclaw-memory-ops",
+    "runtime",
+    "openclaw",
+    "memory-runtime-manifest.json",
+  );
+  let runtimeScriptsDir = path.join(
+    selfDir,
+    "openclaw-memory-ops",
+    "runtime",
+    "openclaw",
+    "scripts",
+  );
+  // Backward compatibility if runtime pack still exists at repo root.
+  if (!(await hasFile(manifestPath)) || !(await hasFile(runtimeScriptsDir))) {
+    manifestPath = path.join(selfDir, "runtime", "openclaw", "memory-runtime-manifest.json");
+    runtimeScriptsDir = path.join(selfDir, "runtime", "openclaw", "scripts");
+  }
   if (!(await hasFile(manifestPath)) || !(await hasFile(runtimeScriptsDir))) {
     return { injected: false, changedPackage: false, copiedScripts: 0, reason: "pack-missing" };
   }

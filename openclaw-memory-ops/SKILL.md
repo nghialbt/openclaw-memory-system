@@ -31,6 +31,8 @@ This skill now detects runtime capability before running automation:
 ## Commands
 
 ### 1) Bootstrap (first run)
+Bootstrap now auto-patches runtime if core `memory:*` scripts are missing.
+
 macOS/Linux:
 ```bash
 bash scripts/bootstrap_memory.sh --repo-root /path/to/openclaw --agent main

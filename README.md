@@ -47,6 +47,15 @@ To disable auto patching:
 node install.mjs --openclaw-repo /path/to/openclaw --skip-runtime-inject
 ```
 
+If you installed **skill-only** (without running `install.mjs`), bootstrap can still auto-patch runtime:
+```bash
+bash ~/.codex/skills/openclaw-memory-ops/scripts/bootstrap_memory.sh --repo-root /path/to/openclaw
+```
+Windows:
+```powershell
+powershell -ExecutionPolicy Bypass -File "$HOME/.codex/skills/openclaw-memory-ops/scripts/bootstrap_memory.ps1" --repo-root C:\path\to\openclaw
+```
+
 ## Skill path
 - `openclaw-memory-ops/`
 
@@ -72,6 +81,20 @@ bash ~/.codex/skills/openclaw-memory-ops/scripts/memory_doctor.sh --repo-root /p
 Windows:
 ```powershell
 powershell -ExecutionPolicy Bypass -File "$HOME/.codex/skills/openclaw-memory-ops/scripts/memory_doctor.ps1" --repo-root C:\path\to\openclaw
+```
+
+If doctor reports `memory:*` scripts missing, run bootstrap once (it auto-injects runtime pack):
+```bash
+bash ~/.codex/skills/openclaw-memory-ops/scripts/bootstrap_memory.sh --repo-root /path/to/openclaw
+```
+Windows:
+```powershell
+powershell -ExecutionPolicy Bypass -File "$HOME/.codex/skills/openclaw-memory-ops/scripts/bootstrap_memory.ps1" --repo-root C:\path\to\openclaw
+```
+
+If doctor reports dashboard/PM2 not ready on Windows:
+```powershell
+.\manage.ps1 memory setup
 ```
 
 ## Architecture + Runbook Files

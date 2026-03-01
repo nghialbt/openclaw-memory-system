@@ -3,6 +3,7 @@ import fs from "node:fs/promises";
 import os from "node:os";
 import path from "node:path";
 import { spawn } from "node:child_process";
+import { fileURLToPath } from "node:url";
 
 function parseArgs(argv) {
   const args = {};
@@ -27,15 +28,18 @@ function usage() {
     "  node scripts/memory_ops.mjs <command> [options]",
     "",
     "Commands:",
-    "  bootstrap       Initialize and run first memory cycle",
-    "  register-jobs   Register cron jobs (idempotent by name)",
-    "  run-cycle       Run one manual memory cycle",
-    "  doctor          Show health/capability report",
+    "  bootstrap        Initialize and run first memory cycle",
+    "  register-jobs    Register cron jobs (idempotent by name)",
+    "  run-cycle        Run one manual memory cycle",
+    "  doctor           Show health/capability report",
+    "  inject-runtime   Inject memory runtime pack into target repo",
     "",
     "Common options:",
     "  --repo-root <path>",
     "  --memory-root <path>",
     "  --workspace-root <path>",
+    "  --skip-runtime-inject",
+    "  --force-runtime-inject",
     "",
     "Bootstrap options:",
     "  --agent <name>",
@@ -49,21 +53,16 @@ function usage() {
 
 function defaultPaths() {
   return {
-    memoryRoot: process.env.OPENCLAW_MEMORY_ROOT || path.join(os.homedir(), ".openclaw-ytb", "memory"),
+    memoryRoot:
+      process.env.OPENCLAW_MEMORY_ROOT || path.join(os.homedir(), ".openclaw-ytb", "memory"),
     workspaceRoot:
-      process.env.OPENCLAW_WORKSPACE_ROOT || path.join(os.homedir(), ".openclaw-ytb", "workspace"),
+      process.env.OPENCLAW_WORKSPACE_ROOT ||
+      path.join(os.homedir(), ".openclaw-ytb", "workspace"),
   };
 }
 
 function isTruthyFlag(v) {
   return v === true || v === "true" || v === "1";
-}
-
-async function readPackageScripts(repoRoot) {
-  const pkgPath = path.join(repoRoot, "package.json");
-  const raw = await fs.readFile(pkgPath, "utf8");
-  const parsed = JSON.parse(raw);
-  return parsed?.scripts && typeof parsed.scripts === "object" ? parsed.scripts : {};
 }
 
 function runCommand(command, args, options = {}) {
@@ -97,13 +96,29 @@ function runCommand(command, args, options = {}) {
   });
 }
 
-async function hasFile(p) {
+async function hasFile(filePath) {
   try {
-    await fs.access(p);
+    await fs.access(filePath);
     return true;
   } catch {
     return false;
   }
+}
+
+async function readPackageJson(repoRoot) {
+  const pkgPath = path.join(repoRoot, "package.json");
+  const raw = await fs.readFile(pkgPath, "utf8");
+  const parsed = JSON.parse(raw);
+  return parsed && typeof parsed === "object" ? parsed : {};
+}
+
+async function writePackageJson(repoRoot, pkg) {
+  const pkgPath = path.join(repoRoot, "package.json");
+  await fs.writeFile(pkgPath, `${JSON.stringify(pkg, null, 2)}\n`, "utf8");
+}
+
+function packageScripts(pkg) {
+  return pkg?.scripts && typeof pkg.scripts === "object" ? pkg.scripts : {};
 }
 
 function hasScript(scripts, name) {
@@ -124,11 +139,199 @@ function envForMemory(memoryRoot, workspaceRoot) {
 
 async function runPnpmScript(repoRoot, scriptName, extraArgs, env) {
   const args = [scriptName, ...extraArgs];
-  const res = await runCommand("pnpm", args, { cwd: repoRoot, env });
-  return res;
+  return runCommand("pnpm", args, { cwd: repoRoot, env });
 }
 
-async function bootstrap(repoRoot, args, scripts) {
+function resolveRuntimePackPaths() {
+  const scriptDir = path.dirname(fileURLToPath(import.meta.url));
+  const skillRoot = path.resolve(scriptDir, "..");
+  const runtimeRoot = path.join(skillRoot, "runtime", "openclaw");
+  return {
+    runtimeRoot,
+    manifestPath: path.join(runtimeRoot, "memory-runtime-manifest.json"),
+    scriptsDir: path.join(runtimeRoot, "scripts"),
+  };
+}
+
+async function readRuntimeManifest() {
+  const paths = resolveRuntimePackPaths();
+  if (!(await hasFile(paths.manifestPath)) || !(await hasFile(paths.scriptsDir))) {
+    return { available: false, paths, manifest: null };
+  }
+  const raw = await fs.readFile(paths.manifestPath, "utf8");
+  return {
+    available: true,
+    paths,
+    manifest: JSON.parse(raw),
+  };
+}
+
+async function copyRuntimeScripts(params) {
+  const { srcDir, dstDir, force } = params;
+  await fs.mkdir(dstDir, { recursive: true });
+  const entries = await fs.readdir(srcDir, { withFileTypes: true });
+  let copied = 0;
+  for (const entry of entries) {
+    if (!entry.isFile()) continue;
+    if (!entry.name.startsWith("memory-") || !entry.name.endsWith(".ts")) continue;
+    const src = path.join(srcDir, entry.name);
+    const dst = path.join(dstDir, entry.name);
+    const exists = await hasFile(dst);
+    if (!exists || force) {
+      await fs.copyFile(src, dst);
+      copied += 1;
+    }
+  }
+  return copied;
+}
+
+function mergeScriptEntries(pkg, manifest, force) {
+  if (!pkg.scripts || typeof pkg.scripts !== "object") {
+    pkg.scripts = {};
+  }
+  let changed = false;
+  for (const [name, cmd] of Object.entries(manifest.scripts || {})) {
+    if (!(name in pkg.scripts) || force) {
+      pkg.scripts[name] = cmd;
+      changed = true;
+    }
+  }
+  return changed;
+}
+
+function mergeDependencyEntries(pkg, manifest) {
+  if (!pkg.dependencies || typeof pkg.dependencies !== "object") {
+    pkg.dependencies = {};
+  }
+  if (!pkg.devDependencies || typeof pkg.devDependencies !== "object") {
+    pkg.devDependencies = {};
+  }
+
+  let changed = false;
+  for (const [name, version] of Object.entries(manifest.dependencies || {})) {
+    if (!pkg.dependencies[name] && !pkg.devDependencies[name]) {
+      pkg.dependencies[name] = version;
+      changed = true;
+    }
+  }
+  for (const [name, version] of Object.entries(manifest.devDependencies || {})) {
+    if (!pkg.dependencies[name] && !pkg.devDependencies[name]) {
+      pkg.devDependencies[name] = version;
+      changed = true;
+    }
+  }
+  return changed;
+}
+
+async function injectRuntime(params) {
+  const { repoRoot, forceInject } = params;
+  const runtime = await readRuntimeManifest();
+  if (!runtime.available || !runtime.manifest) {
+    return {
+      injected: false,
+      reason: "runtime-pack-missing-in-skill",
+      copiedScripts: 0,
+      changedPackage: false,
+      installCode: 0,
+      missingCoreBefore: [],
+    };
+  }
+
+  const pkg = await readPackageJson(repoRoot);
+  const scriptsBefore = packageScripts(pkg);
+  const missingCoreBefore = missingScripts(
+    scriptsBefore,
+    runtime.manifest.requiredCoreScripts || [],
+  );
+
+  if (missingCoreBefore.length === 0 && !forceInject) {
+    return {
+      injected: false,
+      reason: "runtime-already-capable",
+      copiedScripts: 0,
+      changedPackage: false,
+      installCode: 0,
+      missingCoreBefore,
+    };
+  }
+
+  const copiedScripts = await copyRuntimeScripts({
+    srcDir: runtime.paths.scriptsDir,
+    dstDir: path.join(repoRoot, "scripts"),
+    force: forceInject,
+  });
+
+  const scriptsChanged = mergeScriptEntries(pkg, runtime.manifest, forceInject);
+  const depsChanged = mergeDependencyEntries(pkg, runtime.manifest);
+  const changedPackage = scriptsChanged || depsChanged;
+
+  if (changedPackage) {
+    await writePackageJson(repoRoot, pkg);
+  }
+
+  const markerPath = path.join(repoRoot, "scripts", ".openclaw-memory-runtime-injected.json");
+  await fs.writeFile(
+    markerPath,
+    `${JSON.stringify(
+      {
+        source: "nghialbt/openclaw-memory-system",
+        injectedAt: new Date().toISOString(),
+        copiedScripts,
+        changedPackage,
+        forceInject,
+        missingCoreBefore,
+      },
+      null,
+      2,
+    )}\n`,
+    "utf8",
+  );
+
+  let installCode = 0;
+  if (changedPackage) {
+    const install = await runCommand("pnpm", ["install"], { cwd: repoRoot });
+    installCode = install.code;
+  }
+
+  return {
+    injected: true,
+    reason: "injected",
+    copiedScripts,
+    changedPackage,
+    installCode,
+    missingCoreBefore,
+  };
+}
+
+async function ensureRuntimeCapabilities(repoRoot, args, scripts) {
+  const forceInject = isTruthyFlag(args["force-runtime-inject"]);
+  const skipInject = isTruthyFlag(args["skip-runtime-inject"]);
+  const requiredBase = ["memory:status:init", "memory:audit", "memory:render"];
+  const missingBase = missingScripts(scripts, requiredBase);
+
+  if (missingBase.length === 0 && !forceInject) {
+    return { scripts, injected: false, reason: "runtime-already-capable" };
+  }
+  if (skipInject && !forceInject) {
+    return { scripts, injected: false, reason: "skip-requested" };
+  }
+
+  const result = await injectRuntime({ repoRoot, forceInject });
+  if (result.installCode && result.installCode !== 0) {
+    throw new Error(`pnpm install failed during runtime injection (code=${result.installCode})`);
+  }
+
+  const refreshedPkg = await readPackageJson(repoRoot);
+  const refreshedScripts = packageScripts(refreshedPkg);
+  return {
+    scripts: refreshedScripts,
+    injected: result.injected,
+    reason: result.reason,
+    details: result,
+  };
+}
+
+async function bootstrap(repoRoot, args, scriptsInput) {
   const defaults = defaultPaths();
   const memoryRoot = args["memory-root"] || defaults.memoryRoot;
   const workspaceRoot = args["workspace-root"] || defaults.workspaceRoot;
@@ -136,12 +339,27 @@ async function bootstrap(repoRoot, args, scripts) {
   const skipCapture = isTruthyFlag(args["skip-capture"]);
   const skipTriage = isTruthyFlag(args["skip-triage"]);
 
+  const cap = await ensureRuntimeCapabilities(repoRoot, args, scriptsInput);
+  let scripts = cap.scripts;
+  if (cap.injected) {
+    console.log("Runtime capability injection: done");
+    if (cap.details) {
+      console.log(`- copied scripts: ${cap.details.copiedScripts}`);
+      console.log(`- package changed: ${cap.details.changedPackage ? "yes" : "no"}`);
+      if (cap.details.missingCoreBefore?.length) {
+        console.log(`- missing core before: ${cap.details.missingCoreBefore.join(", ")}`);
+      }
+    }
+  } else if (cap.reason !== "runtime-already-capable") {
+    console.log(`Runtime capability injection: skipped (${cap.reason})`);
+  }
+
   const requiredBase = ["memory:status:init", "memory:audit", "memory:render"];
   const baseMissing = missingScripts(scripts, requiredBase);
   if (baseMissing.length > 0) {
-    console.log("[warn] Runtime repo does not provide required memory scripts for bootstrap:");
+    console.log("[warn] Runtime repo still missing required memory scripts for bootstrap:");
     for (const name of baseMissing) console.log(`- missing: ${name}`);
-    console.log("[hint] This is a branch/runtime mismatch. Skill installed, bootstrap skipped.");
+    console.log("[hint] Run inject-runtime manually or use a runtime branch with memory pipeline.");
     return 3;
   }
 
@@ -195,7 +413,10 @@ async function bootstrap(repoRoot, args, scripts) {
   return 0;
 }
 
-async function registerJobs(repoRoot, args, scripts) {
+async function registerJobs(repoRoot, args, scriptsInput) {
+  const cap = await ensureRuntimeCapabilities(repoRoot, args, scriptsInput);
+  const scripts = cap.scripts;
+
   const defaults = defaultPaths();
   const memoryRoot = args["memory-root"] || defaults.memoryRoot;
   const workspaceRoot = args["workspace-root"] || defaults.workspaceRoot;
@@ -280,7 +501,10 @@ async function registerJobs(repoRoot, args, scripts) {
   return 0;
 }
 
-async function runCycle(repoRoot, args, scripts) {
+async function runCycle(repoRoot, args, scriptsInput) {
+  const cap = await ensureRuntimeCapabilities(repoRoot, args, scriptsInput);
+  const scripts = cap.scripts;
+
   const defaults = defaultPaths();
   const memoryRoot = args["memory-root"] || defaults.memoryRoot;
   const workspaceRoot = args["workspace-root"] || defaults.workspaceRoot;
@@ -331,6 +555,10 @@ async function doctor(repoRoot, args, scripts) {
   console.log(`- memory root: ${memoryRoot}`);
   console.log(`- workspace root: ${workspaceRoot}`);
 
+  const runtime = await readRuntimeManifest();
+  console.log("\nRuntime pack:");
+  console.log(`- available in skill: ${runtime.available ? "yes" : "no"}`);
+
   console.log("\nScript capabilities:");
   for (const name of required) {
     console.log(`- ${name}: ${hasScript(scripts, name) ? "yes" : "no"}`);
@@ -339,9 +567,18 @@ async function doctor(repoRoot, args, scripts) {
   const manageSh = await hasFile(path.join(repoRoot, "manage.sh"));
   const managePs1 = await hasFile(path.join(repoRoot, "manage.ps1"));
   console.log("\nDashboard capability:");
-  console.log(`- memory:dashboard:web script: ${hasScript(scripts, "memory:dashboard:web") ? "yes" : "no"}`);
+  console.log(
+    `- memory:dashboard:web script: ${hasScript(scripts, "memory:dashboard:web") ? "yes" : "no"}`,
+  );
   console.log(`- manage.sh: ${manageSh ? "yes" : "no"}`);
   console.log(`- manage.ps1: ${managePs1 ? "yes" : "no"}`);
+  if (managePs1) {
+    console.log("- hint (Windows): .\\manage.ps1 memory setup");
+  } else if (manageSh) {
+    console.log("- hint (macOS/Linux): ./manage.sh memory start");
+  } else if (hasScript(scripts, "memory:dashboard:start")) {
+    console.log("- hint: pnpm memory:dashboard:start");
+  }
 
   const env = envForMemory(memoryRoot, workspaceRoot);
   if (hasScript(scripts, "memory:audit")) {
@@ -370,14 +607,27 @@ async function main() {
     process.exit(1);
   }
 
-  const scripts = await readPackageScripts(repoRoot);
+  const pkg = await readPackageJson(repoRoot);
+  const scripts = packageScripts(pkg);
 
   let rc = 0;
   if (command === "bootstrap") rc = await bootstrap(repoRoot, args, scripts);
   else if (command === "register-jobs") rc = await registerJobs(repoRoot, args, scripts);
   else if (command === "run-cycle") rc = await runCycle(repoRoot, args, scripts);
   else if (command === "doctor") rc = await doctor(repoRoot, args, scripts);
-  else {
+  else if (command === "inject-runtime") {
+    const result = await injectRuntime({
+      repoRoot,
+      forceInject: isTruthyFlag(args["force-runtime-inject"]),
+    });
+    console.log(`inject-runtime: ${result.injected ? "done" : "skipped"} (${result.reason})`);
+    if (result.missingCoreBefore?.length) {
+      console.log(`- missing core before: ${result.missingCoreBefore.join(", ")}`);
+    }
+    if (result.installCode && result.installCode !== 0) {
+      rc = result.installCode;
+    }
+  } else {
     usage();
     process.exit(1);
   }
