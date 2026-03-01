@@ -2,38 +2,65 @@
 
 Portable skill bundle for deploying and operating the OpenClaw memory pipeline.
 
-## Quick install (one command)
+## What was fixed
+This package now supports:
+- macOS/Linux + Windows installation flow,
+- runtime capability detection (no hard fail on branch mismatch),
+- graceful skip for unsupported memory scripts/jobs/dashboard on custom branches.
 
-Set key first (optional but recommended for auto-triage):
-```bash
-export GEMINI_API_KEY="<your_key>"
-```
+## Quick install
 
-Run installer from GitHub:
+### macOS / Linux
 ```bash
+export GEMINI_API_KEY="<your_key>"   # optional but recommended
 curl -fsSL https://raw.githubusercontent.com/nghialbt/openclaw-memory-system/main/install.sh | \
   bash -s -- --openclaw-repo /path/to/openclaw --tz Asia/Ho_Chi_Minh
 ```
 
-What this installer does:
-- Installs skill into `~/.codex/skills/openclaw-memory-ops`.
-- Bootstraps memory pipeline (`status:init`, capture, audit, render, archive index).
-- Registers recurring jobs (capture, triage, audit, prune weekly).
+### Windows (PowerShell)
+```powershell
+$env:GEMINI_API_KEY = "<your_key>"   # optional but recommended
+git clone https://github.com/nghialbt/openclaw-memory-system.git
+cd openclaw-memory-system
+node install.mjs --openclaw-repo C:\path\to\openclaw --tz Asia/Ho_Chi_Minh
+```
+
+## Installer behavior
+Installer performs:
+- install skill into `~/.codex/skills/openclaw-memory-ops` (or `$CODEX_HOME/skills`),
+- bootstrap memory pipeline,
+- register recurring jobs.
+
+If target runtime is missing required scripts (for example no `memory:status:init`):
+- skill installation still succeeds,
+- unsupported steps are skipped,
+- doctor output will explain missing capabilities.
 
 ## Skill path
 - `openclaw-memory-ops/`
 
 ## Included scripts
-- `openclaw-memory-ops/scripts/bootstrap_memory.sh`
-- `openclaw-memory-ops/scripts/register_memory_jobs.sh`
-- `openclaw-memory-ops/scripts/run_memory_cycle.sh`
-- `openclaw-memory-ops/scripts/memory_doctor.sh`
+- Core: `openclaw-memory-ops/scripts/memory_ops.mjs`
+- Bash wrappers:
+  - `bootstrap_memory.sh`
+  - `register_memory_jobs.sh`
+  - `run_memory_cycle.sh`
+  - `memory_doctor.sh`
+- PowerShell wrappers:
+  - `bootstrap_memory.ps1`
+  - `register_memory_jobs.ps1`
+  - `run_memory_cycle.ps1`
+  - `memory_doctor.ps1`
 
-## Manual install
+## Health check after install
+macOS/Linux:
 ```bash
-git clone https://github.com/nghialbt/openclaw-memory-system.git
-mkdir -p ~/.codex/skills
-cp -R openclaw-memory-system/openclaw-memory-ops ~/.codex/skills/
+bash ~/.codex/skills/openclaw-memory-ops/scripts/memory_doctor.sh --repo-root /path/to/openclaw
+```
+
+Windows:
+```powershell
+powershell -ExecutionPolicy Bypass -File "$HOME/.codex/skills/openclaw-memory-ops/scripts/memory_doctor.ps1" --repo-root C:\path\to\openclaw
 ```
 
 ## Architecture + Runbook Files
@@ -62,11 +89,9 @@ Dashboard URL (default): `http://127.0.0.1:3903/`
 ![Memory Status Dashboard](docs/assets/Memory_Status_Dashboard.jpg)
 
 ## Skill not showing in UI?
-If the skill does not appear in your Skills panel:
-1. Ensure `openclaw-memory-ops/agents/openai.yaml` exists in the installed skill folder.
-2. Re-run installer (install-only mode):
+1. Ensure `openclaw-memory-ops/agents/openai.yaml` exists in installed skill folder.
+2. Re-run installer (install only):
 ```bash
-curl -fsSL https://raw.githubusercontent.com/nghialbt/openclaw-memory-system/main/install.sh | \
-  bash -s -- --openclaw-repo /path/to/openclaw --skip-bootstrap --skip-jobs
+node install.mjs --openclaw-repo /path/to/openclaw --skip-bootstrap --skip-jobs
 ```
 3. Restart Codex/OpenClaw app.
