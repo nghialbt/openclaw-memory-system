@@ -1,0 +1,32 @@
+{
+  "requiredCoreScripts": [
+    "memory:status:init",
+    "memory:audit",
+    "memory:render"
+  ],
+  "scripts": {
+    "memory:archive:index": "node --import tsx scripts/memory-archive-index.ts",
+    "memory:audit": "node --import tsx scripts/memory-audit.ts",
+    "memory:capture": "node --import tsx scripts/memory-capture-from-session.ts",
+    "memory:cron:print": "node --import tsx scripts/memory-cron-print.ts",
+    "memory:dashboard": "node --import tsx scripts/memory-dashboard.ts",
+    "memory:dashboard:html": "node --import tsx scripts/memory-dashboard-html.ts",
+    "memory:dashboard:web": "node --import tsx scripts/memory-dashboard-web.ts",
+    "memory:dashboard:start": "node --import tsx scripts/memory-dashboard-web.ts --host 127.0.0.1 --port 3903",
+    "memory:import:legacy": "node --import tsx scripts/memory-import-legacy-md.ts",
+    "memory:inbox:promote": "node --import tsx scripts/memory-inbox-promote.ts",
+    "memory:inbox:triage": "node --import tsx scripts/memory-inbox-triage.ts",
+    "memory:prune": "node --import tsx scripts/memory-prune.ts",
+    "memory:prune:apply": "node --import tsx scripts/memory-prune.ts --apply",
+    "memory:render": "node --import tsx scripts/memory-render.ts",
+    "memory:status:init": "node --import tsx scripts/memory-status-init.ts",
+    "memory:status:set": "node --import tsx scripts/memory-status-set.ts"
+  },
+  "dependencies": {
+    "yaml": "^2.8.2",
+    "express": "^5.2.1"
+  },
+  "devDependencies": {
+    "tsx": "^4.21.0"
+  }
+}

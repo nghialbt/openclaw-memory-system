@@ -30,11 +30,22 @@ Installer performs:
 - install skill into `~/.codex/skills/openclaw-memory-ops` (or `$CODEX_HOME/skills`),
 - bootstrap memory pipeline,
 - register recurring jobs.
+- auto-inject memory runtime pack into target repo when core scripts are missing:
+  - `memory:status:init`
+  - `memory:audit`
+  - `memory:render`
+  - plus full `memory:*` script set and required dependencies.
 
 If target runtime is missing required scripts (for example no `memory:status:init`):
-- skill installation still succeeds,
-- unsupported steps are skipped,
-- doctor output will explain missing capabilities.
+- installer patches target repo with compatible memory scripts,
+- updates `package.json` scripts/dependencies,
+- runs `pnpm install`,
+- then continues bootstrap/jobs.
+
+To disable auto patching:
+```bash
+node install.mjs --openclaw-repo /path/to/openclaw --skip-runtime-inject
+```
 
 ## Skill path
 - `openclaw-memory-ops/`

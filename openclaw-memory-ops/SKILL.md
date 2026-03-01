@@ -18,8 +18,9 @@ Use this skill when the user asks to:
 
 ## Important behavior
 This skill now detects runtime capability before running automation:
-- If target repo lacks required `memory:*` scripts, it does **not hard fail** bootstrap/jobs.
-- It installs skill normally, then reports `branch/runtime mismatch` and skips unsupported steps.
+- If target repo lacks required `memory:*` scripts, installer can auto-inject a compatible memory runtime pack into that repo.
+- The pack adds missing `memory:*` scripts, required deps, and allows bootstrap/jobs/dashboard commands to run.
+- You can disable injection with `--skip-runtime-inject`.
 
 ## Prerequisites
 - OpenClaw repo is available locally.
