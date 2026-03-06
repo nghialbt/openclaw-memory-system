@@ -317,22 +317,64 @@ async function readKeyFromOpenClawConfig(configPath: string): Promise<string> {
   return asString(env?.GEMINI_API_KEY) ?? asString(env?.GOOGLE_API_KEY) ?? "";
 }
 
-async function resolveGoogleApiKey(
-  args: Record<string, string | boolean>,
-): Promise<{ key: string; source: "env" | "openclaw-config" }> {
+type AuthConfig =
+  | { type: "gemini"; key: string; baseUrl: string; source: string }
+  | { type: "gateway"; url: string; token: string; source: string };
+
+async function resolveAuthConfig(args: Record<string, string | boolean>): Promise<AuthConfig> {
+  // 1. Try environment variables for direct Gemini API
   const envKey = process.env.GEMINI_API_KEY?.trim() || process.env.GOOGLE_API_KEY?.trim() || "";
   if (envKey.length > 0) {
-    return { key: envKey, source: "env" };
+    return {
+      type: "gemini",
+      key: envKey,
+      baseUrl:
+        typeof args["google-base-url"] === "string"
+          ? args["google-base-url"].trim() || DEFAULT_GOOGLE_BASE_URL
+          : DEFAULT_GOOGLE_BASE_URL,
+      source: "env",
+    };
   }
 
+  // 2. Try OpenClaw config
   const configPath = resolveOpenClawConfigPath(args);
-  const configKey = await readKeyFromOpenClawConfig(configPath);
-  if (configKey.length > 0) {
-    return { key: configKey, source: "openclaw-config" };
+  if (existsSync(configPath)) {
+    try {
+      const raw = await readFile(configPath, "utf8");
+      const root = asObject(JSON.parse(raw));
+
+      // 2a. Check for API key in config env
+      const env = asObject(root?.env);
+      const configKey = asString(env?.GEMINI_API_KEY) ?? asString(env?.GOOGLE_API_KEY) ?? "";
+      if (configKey.length > 0) {
+        return {
+          type: "gemini",
+          key: configKey,
+          baseUrl: DEFAULT_GOOGLE_BASE_URL,
+          source: `config:${configPath}`,
+        };
+      }
+
+      // 2b. Check for Gateway configuration
+      const gateway = asObject(root?.gateway);
+      const port = Number(gateway?.port) || 18789;
+      const auth = asObject(gateway?.auth);
+      const token = asString(auth?.token) || "";
+      if (token.length > 0) {
+        return {
+          type: "gateway",
+          url: `http://127.0.0.1:${port}`,
+          token,
+          source: `gateway:${configPath}`,
+        };
+      }
+    } catch {
+      // ignore parse errors and proceed to fallback
+    }
   }
 
   throw new Error(
-    `Missing GEMINI_API_KEY or GOOGLE_API_KEY for model triage (env + ${configPath}).`,
+    `No valid authentication found (no GEMINI_API_KEY and no OpenClaw Gateway token in ${configPath}).`,
   );
 }
 
@@ -347,23 +389,28 @@ function parseGeminiModelId(modelRef: string): string {
   return trimmed;
 }
 
-function extractGeminiText(response: unknown): string {
-  const obj = asObject(response);
-  if (!obj) {
-    return "";
+function extractText(type: "gemini" | "gateway", data: unknown): string {
+  if (type === "gemini") {
+    const obj = asObject(data);
+    if (!obj) return "";
+    const candidates = Array.isArray(obj.candidates) ? obj.candidates : [];
+    const first = asObject(candidates[0]);
+    const content = asObject(first?.content);
+    const parts = Array.isArray(content?.parts) ? content.parts : [];
+    return parts
+      .map((p) => asObject(p)?.text)
+      .filter(Boolean)
+      .join("\n")
+      .trim();
+  } else {
+    // OpenAI/Gateway format
+    const obj = asObject(data);
+    if (!obj) return "";
+    const choices = Array.isArray(obj.choices) ? obj.choices : [];
+    const first = asObject(choices[0]);
+    const message = asObject(first?.message);
+    return asString(message?.content) ?? "";
   }
-  const candidates = Array.isArray(obj.candidates) ? obj.candidates : [];
-  const first = asObject(candidates[0]);
-  const content = asObject(first?.content);
-  const parts = Array.isArray(content?.parts) ? content.parts : [];
-  const texts: string[] = [];
-  for (const part of parts) {
-    const entry = asObject(part);
-    if (entry && typeof entry.text === "string") {
-      texts.push(entry.text);
-    }
-  }
-  return texts.join("\n").trim();
 }
 
 function parseDecisionJson(text: string): RawObject | null {
@@ -374,7 +421,7 @@ function parseDecisionJson(text: string): RawObject | null {
   try {
     const parsed = JSON.parse(direct);
     return asObject(parsed);
-  } catch {}
+  } catch { }
 
   const match = /{[\s\S]*}/.exec(direct);
   if (!match) {
@@ -388,17 +435,13 @@ function parseDecisionJson(text: string): RawObject | null {
   }
 }
 
-async function decideWithGemini(params: {
+async function decideWithModel(params: {
   candidate: CaptureCandidate;
   modelRef: string;
-  googleBaseUrl: string;
-  googleApiKey: string;
+  auth: AuthConfig;
   highThreshold: number;
   pendingThreshold: number;
 }): Promise<ModelDecision> {
-  const modelId = parseGeminiModelId(params.modelRef);
-  const endpoint = `${params.googleBaseUrl.replace(/\/$/, "")}/models/${encodeURIComponent(modelId)}:generateContent?key=${encodeURIComponent(params.googleApiKey)}`;
-
   const prompt = [
     "You are a strict memory triage classifier.",
     "Classify this candidate memory into one status: active | pending | deprecated.",
@@ -412,37 +455,46 @@ async function decideWithGemini(params: {
     `Candidate JSON: ${JSON.stringify(params.candidate)}`,
   ].join("\n");
 
-  const payload = {
-    contents: [
-      {
-        role: "user",
-        parts: [{ text: prompt }],
-      },
-    ],
-    generationConfig: {
+  let endpoint: string;
+  let headers: Record<string, string> = { "Content-Type": "application/json" };
+  let payload: any;
+
+  if (params.auth.type === "gemini") {
+    const modelId = parseGeminiModelId(params.modelRef);
+    endpoint = `${params.auth.baseUrl.replace(/\/$/, "")}/models/${encodeURIComponent(modelId)}:generateContent?key=${encodeURIComponent(params.auth.key)}`;
+    payload = {
+      contents: [{ role: "user", parts: [{ text: prompt }] }],
+      generationConfig: { temperature: 0, responseMimeType: "application/json" },
+    };
+  } else {
+    endpoint = `${params.auth.url.replace(/\/$/, "")}/v1/chat/completions`;
+    headers["Authorization"] = `Bearer ${params.auth.token}`;
+    payload = {
+      model: params.modelRef.includes("/") ? params.modelRef : `google-antigravity/${params.modelRef}`,
+      messages: [{ role: "user", content: prompt }],
       temperature: 0,
-      responseMimeType: "application/json",
-    },
-  };
+      response_format: { type: "json_object" },
+    };
+  }
 
   const response = await fetch(endpoint, {
     method: "POST",
-    headers: {
-      "Content-Type": "application/json",
-    },
+    headers,
     body: JSON.stringify(payload),
   });
+
   if (!response.ok) {
     const text = await response.text().catch(() => "");
     throw new Error(
-      `Gemini triage request failed (${response.status}): ${text || response.statusText}`,
+      `${params.auth.type} triage request failed (${response.status}): ${text || response.statusText}`,
     );
   }
+
   const data = (await response.json()) as unknown;
-  const text = extractGeminiText(data);
+  const text = extractText(params.auth.type, data);
   const parsed = parseDecisionJson(text);
   if (!parsed) {
-    throw new Error(`Gemini triage returned non-JSON output: ${text.slice(0, 300)}`);
+    throw new Error(`Model returned non-JSON output: ${text.slice(0, 300)}`);
   }
 
   const rawScore = Number(parsed.score);
@@ -452,7 +504,7 @@ async function decideWithGemini(params: {
   const reason = asString(parsed.reason ?? undefined) ?? undefined;
 
   if (!Number.isFinite(score) && !assignedFromModel) {
-    throw new Error(`Gemini triage JSON missing score/status: ${JSON.stringify(parsed)}`);
+    throw new Error(`Triage JSON missing score/status: ${JSON.stringify(parsed)}`);
   }
 
   const effectiveScore = Number.isFinite(score)
@@ -522,12 +574,8 @@ async function main() {
     typeof args.model === "string"
       ? args.model.trim() || DEFAULT_TRIAGE_MODEL
       : DEFAULT_TRIAGE_MODEL;
-  const googleBaseUrl =
-    typeof args["google-base-url"] === "string"
-      ? args["google-base-url"].trim() || DEFAULT_GOOGLE_BASE_URL
-      : DEFAULT_GOOGLE_BASE_URL;
-  const keyResolution = await resolveGoogleApiKey(args);
-  const googleApiKey = keyResolution.key;
+
+  const auth = await resolveAuthConfig(args);
   const memoryRoot = resolve(resolveMemoryRoot(args));
   const inboxDir = resolve(memoryRoot, "inbox");
   const archiveDir = resolve(inboxDir, "archive");
@@ -624,11 +672,10 @@ async function main() {
             continue;
           }
 
-          const decision = await decideWithGemini({
+          const decision = await decideWithModel({
             candidate,
             modelRef,
-            googleBaseUrl,
-            googleApiKey,
+            auth,
             highThreshold,
             pendingThreshold,
           });
@@ -648,7 +695,7 @@ async function main() {
             scope: { env: "all" },
             updated: today,
             confidence: decision.confidence ?? deriveConfidence(score),
-            next: decision.reason ?? "Auto-triaged by Gemini model.",
+            next: decision.reason ?? `Auto-triaged by ${auth.type} model.`,
           };
           if (assignedStatus === "active") {
             const conflictIds = findActiveConflictPeers(item, prospectiveActive);
@@ -674,7 +721,7 @@ async function main() {
           }
 
           triaged.push(item);
-          triagedCounts[assignedStatus] += 1;
+          triagedCounts[assignedStatus as MemoryStatus] += 1;
           existingFingerprints.add(fingerprint);
           archiveRows.push({
             processed_at: nowIso,
@@ -757,7 +804,7 @@ async function main() {
   console.log(`- ignored: ${result.ignored}`);
   console.log(`- thresholds: high>=${highThreshold}, pending>=${pendingThreshold}`);
   console.log(`- model: ${modelRef}`);
-  console.log(`- auth source: ${keyResolution.source}`);
+  console.log(`- auth source: ${auth.source}`);
   console.log(`- archive: ${archivePath}`);
   console.log(`- memory file: ${paths.memoryPath}`);
   console.log(`- runtime file: ${paths.workspaceMemoryPath}`);

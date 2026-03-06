@@ -38,7 +38,7 @@ node scripts/memory_ops.mjs doctor --repo-root /path/to/openclaw --fix
 1. **Target Repo**: You must have an OpenClaw repo locally.
 2. **Node & pnpm**: Required for running scripts.
 3. **OpenClaw CLI** (Optional): Required for `register-jobs`. If missing, you must run cycles manually.
-4. **API Key** (Optional): `GEMINI_API_KEY` is required for AI-powered inbox triage.
+4. **AI Triage Auth** (Optional): AI-powered triage works automatically if the **OpenClaw Gateway** is running (uses internal auth), OR if you manually set `GEMINI_API_KEY`.
 
 ## 🔄 The Memory Pipeline
 

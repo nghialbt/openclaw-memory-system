@@ -648,14 +648,24 @@ async function doctor(repoRoot, args, scripts) {
     });
   }
 
-  // --- Check 6: API key (optional) ---
-  const hasKey = Boolean((process.env.GEMINI_API_KEY || process.env.GOOGLE_API_KEY || "").trim());
-  if (hasKey) {
-    ok.push("GEMINI_API_KEY / GOOGLE_API_KEY: set");
+  // --- Check 6: AI Triage capability (optional) ---
+  const envKey = Boolean((process.env.GEMINI_API_KEY || process.env.GOOGLE_API_KEY || "").trim());
+  let gatewayKey = false;
+  const configPath = path.join(os.homedir(), ".openclaw-ytb", "openclaw.json");
+  if (await hasFile(configPath)) {
+    try {
+      const config = JSON.parse(await fs.readFile(configPath, "utf8"));
+      if (config.env?.GEMINI_API_KEY || config.env?.GOOGLE_API_KEY) gatewayKey = true;
+      if (config.gateway?.auth?.token) gatewayKey = true;
+    } catch { }
+  }
+
+  if (envKey || gatewayKey) {
+    ok.push(`AI triage auth: ${envKey ? "env key" : "config/gateway"}`);
   } else {
     warnings.push({
-      label: "GEMINI_API_KEY / GOOGLE_API_KEY not set (inbox triage will be skipped)",
-      fix: "Optional: export GEMINI_API_KEY=\"your_key\" for AI-powered inbox triage",
+      label: "No AI triage auth found (no key in env/config and no gateway token)",
+      fix: "Optional: set GEMINI_API_KEY or start OpenClaw Gateway for AI triage.",
     });
   }
 

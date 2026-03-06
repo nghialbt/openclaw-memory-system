@@ -9,7 +9,7 @@ Before installing, ensure you have:
 - **Node.js**: Version 18 or higher.
 - **pnpm**: Installed via `npm install -g pnpm`.
 - **openclaw CLI** (Optional): Required for automated cron jobs.
-- **GEMINI_API_KEY** (Optional): Required for AI-powered inbox triage.
+- **AI Triage Auth** (Optional): AI triage works automatically via the local **OpenClaw Gateway**, or you can provide a `GEMINI_API_KEY`.
 
 ## 🚀 Quick Install
 
