@@ -65,7 +65,7 @@ type ModelDecision = {
   reason?: string;
 };
 
-const DEFAULT_TRIAGE_MODEL = "google/gemini-3-flash-preview";
+// Default model will be resolved from openclaw.json if not provided via CLI
 const DEFAULT_GOOGLE_BASE_URL = "https://generativelanguage.googleapis.com/v1beta";
 const DEFAULT_OPENCLAW_CONFIG_PATH = resolve(homedir(), ".openclaw-ytb", "openclaw.json");
 
@@ -75,7 +75,7 @@ function usageAndExit(code: number): never {
       "memory-inbox-triage.ts",
       "",
       "Usage:",
-      "  node --import tsx scripts/memory-inbox-triage.ts [--today YYYY-MM-DD] [--root /path/to/memory] [--workspace-root /path/to/workspace] [--all] [--file /path/to/inbox.yml] [--high-threshold 80] [--pending-threshold 45] [--model google/gemini-3-flash-preview] [--openclaw-config /path/to/openclaw.json]",
+      "  node --import tsx scripts/memory-inbox-triage.ts [--today YYYY-MM-DD] [--root /path/to/memory] [--workspace-root /path/to/workspace] [--all] [--file /path/to/inbox.yml] [--high-threshold 80] [--pending-threshold 45] [--model <model_id>] [--openclaw-config /path/to/openclaw.json]",
     ].join("\n"),
   );
   process.exit(code);
@@ -392,7 +392,7 @@ async function resolveAuthConfig(args: Record<string, string | boolean>): Promis
 function parseGeminiModelId(modelRef: string): string {
   const trimmed = modelRef.trim();
   if (!trimmed) {
-    return "gemini-3.1-pro-high";
+    throw new Error("Internal error: modelRef is empty in parseGeminiModelId");
   }
   if (trimmed.startsWith("google/")) {
     return trimmed.slice("google/".length);
@@ -585,8 +585,13 @@ async function main() {
   const auth = await resolveAuthConfig(args);
   const modelRef =
     (typeof args.model === "string" ? args.model.trim() : null) ||
-    auth.defaultModel ||
-    DEFAULT_TRIAGE_MODEL;
+    auth.defaultModel;
+
+  if (!modelRef) {
+    throw new Error(
+      "No model specified. Please provide --model or set a default model in openclaw.json (agents.defaults.model.primary)."
+    );
+  }
   const memoryRoot = resolve(resolveMemoryRoot(args));
   const inboxDir = resolve(memoryRoot, "inbox");
   const archiveDir = resolve(inboxDir, "archive");
