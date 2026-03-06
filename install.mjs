@@ -296,17 +296,21 @@ async function main() {
   });
 
   if (injectResult.injected) {
-    console.log("Runtime memory pack injection: done");
-    console.log(`- copied scripts: ${injectResult.copiedScripts}`);
-    console.log(`- package.json changed: ${injectResult.changedPackage ? "yes" : "no"}`);
+    console.log("✅ Runtime memory pack injection: done");
+    console.log(`   - copied scripts: ${injectResult.copiedScripts}`);
+    console.log(`   - package.json changed: ${injectResult.changedPackage ? "yes" : "no"}`);
     if (injectResult.missingCore?.length) {
-      console.log(`- missing core before inject: ${injectResult.missingCore.join(", ")}`);
+      console.log(`   - missing core before inject: ${injectResult.missingCore.join(", ")}`);
     }
     if (injectResult.installCode && injectResult.installCode !== 0) {
+      console.error(`❌ pnpm install failed (code=${injectResult.installCode}).`);
+      console.error(`   Try manually: cd "${openclawRepo}" && pnpm install`);
       process.exit(injectResult.installCode);
     }
+  } else if (injectResult.reason === "runtime-already-capable") {
+    console.log("ℹ️  Runtime memory pack injection: skipped (core scripts already present)");
   } else {
-    console.log(`Runtime memory pack injection: skipped (${injectResult.reason})`);
+    console.log(`ℹ️  Runtime memory pack injection: skipped (${injectResult.reason})`);
   }
 
   const { skillsDir, memoryRoot, workspaceRoot } = resolvePaths(args);
@@ -344,7 +348,11 @@ async function main() {
       ],
       { env },
     );
-    if (rc !== 0 && rc !== 3) {
+    if (rc === 3) {
+      console.log("ℹ️  Bootstrap partially skipped: some runtime scripts are missing in this repo.");
+      console.log("   This is expected if the repo uses a custom branch without memory pipeline.");
+      console.log(`   To inject memory scripts: node install.mjs --openclaw-repo "${openclawRepo}" --force-runtime-inject`);
+    } else if (rc !== 0) {
       process.exit(rc);
     }
   }
@@ -366,28 +374,30 @@ async function main() {
       ],
       { env },
     );
-    if (rc !== 0 && rc !== 3) {
+    if (rc === 3) {
+      console.log("ℹ️  Job registration skipped: openclaw CLI not found in PATH.");
+      console.log("   This is optional — memory pipeline works without cron jobs.");
+      console.log("   You can run memory cycles manually anytime.");
+    } else if (rc !== 0) {
       process.exit(rc);
     }
   }
 
-  console.log("\nSetup completed");
-  console.log(`- OpenClaw repo: ${openclawRepo}`);
-  console.log(`- Skill dir: ${dstSkillDir}`);
-  console.log(`- Memory root: ${memoryRoot}`);
-  console.log(`- Workspace root: ${workspaceRoot}`);
-  console.log("\nNext:");
-  console.log("1) Restart Codex/OpenClaw app to refresh Skills UI.");
-  console.log("2) Run health check:");
-  if (process.platform === "win32") {
-    console.log(
-      `   powershell -ExecutionPolicy Bypass -File \"${path.join(dstSkillDir, "scripts", "memory_doctor.ps1")}\" --repo-root \"${openclawRepo}\"`,
-    );
-  } else {
-    console.log(
-      `   bash \"${path.join(dstSkillDir, "scripts", "memory_doctor.sh")}\" --repo-root \"${openclawRepo}\"`,
-    );
-  }
+  console.log("\n╔══════════════════════════════════════╗");
+  console.log("║       Setup completed!               ║");
+  console.log("╚══════════════════════════════════════╝");
+  console.log(`\n📁 Configuration:`);
+  console.log(`   OpenClaw repo:    ${openclawRepo}`);
+  console.log(`   Skill dir:        ${dstSkillDir}`);
+  console.log(`   Memory root:      ${memoryRoot}`);
+  console.log(`   Workspace root:   ${workspaceRoot}`);
+  console.log(`\n📋 Next steps:`);
+  console.log("   1. Restart Codex/OpenClaw app to refresh Skills UI.");
+  console.log("   2. Run health check:");
+  const doctorScript = path.join(dstSkillDir, "scripts", "memory_ops.mjs");
+  console.log(`      node "${doctorScript}" doctor --repo-root "${openclawRepo}"`);
+  console.log("   3. If doctor reports issues, auto-fix them:");
+  console.log(`      node "${doctorScript}" doctor --repo-root "${openclawRepo}" --fix`);
 }
 
 main().catch((err) => {

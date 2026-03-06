@@ -1,81 +1,78 @@
 ---
 name: openclaw-memory-ops
-description: Deploy and operate OpenClaw memory pipeline with cross-platform support (macOS/Linux/Windows), capability detection, and safe fallback when runtime branch is missing memory scripts.
+description: Deploy and operate OpenClaw memory pipeline. Supports cross-platform setup (macOS/Linux/Windows), auto-repairing missing runtime scripts, and automated job registration.
 ---
 
 # OpenClaw Memory Ops
 
-Use this skill when the user asks to:
-- set up memory system on a new machine,
-- run memory pipeline consistently across machines,
-- register/repair memory jobs,
-- debug why memory jobs/dashboard do not run.
+Use this skill when the user asks to **set up/fix the memory system** or **operate the memory pipeline**.
 
-## Cross-platform support
-- macOS/Linux: Bash wrappers + Node core.
-- Windows: PowerShell wrappers + Node core.
-- Core logic is in `scripts/memory_ops.mjs`.
+## 🚀 Quick Start (Automated Setup)
 
-## Important behavior
-This skill now detects runtime capability before running automation:
-- If target repo lacks required `memory:*` scripts, installer can auto-inject a compatible memory runtime pack into that repo.
-- The pack adds missing `memory:*` scripts, required deps, and allows bootstrap/jobs/dashboard commands to run.
-- You can disable injection with `--skip-runtime-inject`.
+If you just arrived on this machine, run the one-liner installer:
 
-## Prerequisites
-- OpenClaw repo is available locally.
-- `node` and `pnpm` installed.
-- For job registration: `openclaw` CLI available.
-- For auto-triage: `GEMINI_API_KEY` or `GOOGLE_API_KEY`.
-
-## Commands
-
-### 1) Bootstrap (first run)
-Bootstrap now auto-patches runtime if core `memory:*` scripts are missing.
-
-macOS/Linux:
+**macOS / Linux:**
 ```bash
-bash scripts/bootstrap_memory.sh --repo-root /path/to/openclaw --agent main
+curl -fsSL https://raw.githubusercontent.com/nghialbt/openclaw-memory-system/main/install.sh | bash -s -- --openclaw-repo /path/to/openclaw
 ```
 
-Windows (PowerShell):
+**Windows:**
 ```powershell
-.\scripts\bootstrap_memory.ps1 --repo-root C:\path\to\openclaw --agent main
+$worker = "https://raw.githubusercontent.com/nghialbt/openclaw-memory-system/main/install.ps1"; iwr $worker | iex; # Use --openclaw-repo thereafter
 ```
 
-### 2) Register jobs
-macOS/Linux:
+## 🏥 Troubleshooting & Health Check
+
+If the memory system isn't working, run the **Doctor** from the installed skill folder:
+
 ```bash
-bash scripts/register_memory_jobs.sh --repo-root /path/to/openclaw --tz Asia/Ho_Chi_Minh
+# 1. Diagnose issues
+node scripts/memory_ops.mjs doctor --repo-root /path/to/openclaw
+
+# 2. Auto-repair (injects missing scripts to package.json)
+node scripts/memory_ops.mjs doctor --repo-root /path/to/openclaw --fix
 ```
 
-Windows:
-```powershell
-.\scripts\register_memory_jobs.ps1 --repo-root C:\path\to\openclaw --tz Asia/Ho_Chi_Minh
-```
+## 🛠️ Prerequisites
 
-### 3) Run one cycle manually
-macOS/Linux:
+1. **Target Repo**: You must have an OpenClaw repo locally.
+2. **Node & pnpm**: Required for running scripts.
+3. **OpenClaw CLI** (Optional): Required for `register-jobs`. If missing, you must run cycles manually.
+4. **API Key** (Optional): `GEMINI_API_KEY` is required for AI-powered inbox triage.
+
+## 🔄 The Memory Pipeline
+
+You can run these commands manually via the skill wrappers:
+
+### 1) Initialize/Reset (`bootstrap`)
+Checks for missing scripts and runs the first full cycle.
 ```bash
-bash scripts/run_memory_cycle.sh --repo-root /path/to/openclaw --agent main
+bash scripts/bootstrap_memory.sh --repo-root /path/to/openclaw
 ```
 
-Windows:
-```powershell
-.\scripts\run_memory_cycle.ps1 --repo-root C:\path\to\openclaw --agent main
-```
-
-### 4) Doctor/health check
-macOS/Linux:
+### 2) Run One Cycle (`run-cycle`)
+Executes: Capture → Triage (AI) → Audit → Render → Archive Index.
 ```bash
-bash scripts/memory_doctor.sh --repo-root /path/to/openclaw
+bash scripts/run_memory_cycle.sh --repo-root /path/to/openclaw
 ```
 
-Windows:
-```powershell
-.\scripts\memory_doctor.ps1 --repo-root C:\path\to\openclaw
+### 3) Register Cron Jobs (`register-jobs`)
+Registers recurring jobs in `openclaw cron`.
+```bash
+bash scripts/register_memory_jobs.sh --repo-root /path/to/openclaw
 ```
 
-## Notes
-- Dashboard startup command depends on target repo runtime (`manage.sh` or `manage.ps1` and/or `memory:dashboard:web`).
-- Use doctor output to see which scripts/features are available on that branch.
+## 📊 Dashboard
+
+The Memory Dashboard provides a web UI for viewing your memory state.
+
+**To start:**
+- macOS/Linux: `./manage.sh memory start` (or `pnpm memory:dashboard:start`)
+- Windows: `pnpm memory:dashboard:start` (Run in the OpenClaw repo)
+
+Default URL: [http://127.0.0.1:3903/](http://127.0.0.1:3903/)
+
+## ⚠️ Notes
+- If `memory:*` scripts are missing in `package.json`, always run `doctor --fix` first.
+- Triage will be skipped automatically if no AI key is found.
+- Cron jobs will be skipped if `openclaw` CLI is not in PATH.

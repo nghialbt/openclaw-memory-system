@@ -540,55 +540,211 @@ async function doctor(repoRoot, args, scripts) {
   const defaults = defaultPaths();
   const memoryRoot = args["memory-root"] || defaults.memoryRoot;
   const workspaceRoot = args["workspace-root"] || defaults.workspaceRoot;
+  const autoFix = isTruthyFlag(args.fix);
 
-  const required = [
+  const scriptDir = path.dirname(fileURLToPath(import.meta.url));
+  const memoryOpsSelf = path.join(scriptDir, "memory_ops.mjs");
+
+  const coreScripts = [
+    "memory:status:init",
+    "memory:audit",
+    "memory:render",
+  ];
+  const allScripts = [
     "memory:status:init",
     "memory:capture",
     "memory:inbox:triage",
     "memory:audit",
     "memory:render",
     "memory:archive:index",
+    "memory:dashboard:web",
   ];
 
-  console.log("Memory doctor");
-  console.log(`- repo root: ${repoRoot}`);
-  console.log(`- memory root: ${memoryRoot}`);
-  console.log(`- workspace root: ${workspaceRoot}`);
+  const issues = [];
+  const warnings = [];
+  const ok = [];
 
+  console.log("╔══════════════════════════════════════╗");
+  console.log("║        Memory System Doctor          ║");
+  console.log("╚══════════════════════════════════════╝");
+  console.log(`\n📁 Paths:`);
+  console.log(`   repo root:      ${repoRoot}`);
+  console.log(`   memory root:    ${memoryRoot}`);
+  console.log(`   workspace root: ${workspaceRoot}`);
+
+  // --- Check 1: Runtime pack availability ---
   const runtime = await readRuntimeManifest();
-  console.log("\nRuntime pack:");
-  console.log(`- available in skill: ${runtime.available ? "yes" : "no"}`);
-
-  console.log("\nScript capabilities:");
-  for (const name of required) {
-    console.log(`- ${name}: ${hasScript(scripts, name) ? "yes" : "no"}`);
+  if (runtime.available) {
+    ok.push("Runtime pack available in skill");
+  } else {
+    issues.push({
+      label: "Runtime pack missing in skill",
+      fix: "Re-install the skill: node install.mjs --openclaw-repo " + repoRoot,
+    });
   }
 
+  // --- Check 2: Memory scripts in target repo ---
+  const missingCore = missingScripts(scripts, coreScripts);
+  const missingAll = missingScripts(scripts, allScripts);
+
+  if (missingCore.length > 0) {
+    issues.push({
+      label: `Missing core memory scripts in package.json: ${missingCore.join(", ")}`,
+      fix: `node "${memoryOpsSelf}" inject-runtime --repo-root "${repoRoot}" --force-runtime-inject`,
+      autoFixable: true,
+    });
+  } else if (missingAll.length > 0) {
+    warnings.push({
+      label: `Missing optional memory scripts: ${missingAll.join(", ")}`,
+      fix: `node "${memoryOpsSelf}" inject-runtime --repo-root "${repoRoot}" --force-runtime-inject`,
+      autoFixable: true,
+    });
+  } else {
+    ok.push("All memory:* scripts present in package.json");
+  }
+
+  // --- Check 3: Memory directories ---
+  const memoryDirExists = await hasFile(memoryRoot);
+  const workspaceDirExists = await hasFile(workspaceRoot);
+  if (memoryDirExists) {
+    ok.push(`Memory directory exists: ${memoryRoot}`);
+  } else {
+    warnings.push({
+      label: `Memory directory missing: ${memoryRoot}`,
+      fix: `Will be created automatically on first bootstrap run`,
+    });
+  }
+  if (workspaceDirExists) {
+    ok.push(`Workspace directory exists: ${workspaceRoot}`);
+  } else {
+    warnings.push({
+      label: `Workspace directory missing: ${workspaceRoot}`,
+      fix: `Will be created automatically on first bootstrap run`,
+    });
+  }
+
+  // --- Check 4: node + pnpm ---
+  const nodeCheck = await runCommand("node", ["--version"], { capture: true });
+  if (nodeCheck.code === 0) {
+    ok.push(`node: ${nodeCheck.stdout.trim()}`);
+  } else {
+    issues.push({ label: "node not found in PATH", fix: "Install Node.js 18+ from https://nodejs.org" });
+  }
+  const pnpmCheck = await runCommand("pnpm", ["--version"], { capture: true });
+  if (pnpmCheck.code === 0) {
+    ok.push(`pnpm: ${pnpmCheck.stdout.trim()}`);
+  } else {
+    issues.push({ label: "pnpm not found in PATH", fix: "Install pnpm: npm install -g pnpm" });
+  }
+
+  // --- Check 5: openclaw CLI (optional) ---
+  const openclawCheck = await runCommand("openclaw", ["--version"], { capture: true });
+  if (openclawCheck.code === 0) {
+    ok.push(`openclaw CLI: available`);
+  } else {
+    warnings.push({
+      label: "openclaw CLI not in PATH (cron job registration will be skipped)",
+      fix: "Optional: install openclaw CLI for automated cron jobs. Memory pipeline works without it.",
+    });
+  }
+
+  // --- Check 6: API key (optional) ---
+  const hasKey = Boolean((process.env.GEMINI_API_KEY || process.env.GOOGLE_API_KEY || "").trim());
+  if (hasKey) {
+    ok.push("GEMINI_API_KEY / GOOGLE_API_KEY: set");
+  } else {
+    warnings.push({
+      label: "GEMINI_API_KEY / GOOGLE_API_KEY not set (inbox triage will be skipped)",
+      fix: "Optional: export GEMINI_API_KEY=\"your_key\" for AI-powered inbox triage",
+    });
+  }
+
+  // --- Check 7: Dashboard ---
+  const hasDashboardScript = hasScript(scripts, "memory:dashboard:web") || hasScript(scripts, "memory:dashboard:start");
   const manageSh = await hasFile(path.join(repoRoot, "manage.sh"));
   const managePs1 = await hasFile(path.join(repoRoot, "manage.ps1"));
-  console.log("\nDashboard capability:");
-  console.log(
-    `- memory:dashboard:web script: ${hasScript(scripts, "memory:dashboard:web") ? "yes" : "no"}`,
-  );
-  console.log(`- manage.sh: ${manageSh ? "yes" : "no"}`);
-  console.log(`- manage.ps1: ${managePs1 ? "yes" : "no"}`);
-  if (managePs1) {
-    console.log("- hint (Windows): .\\manage.ps1 memory setup");
-  } else if (manageSh) {
-    console.log("- hint (macOS/Linux): ./manage.sh memory start");
-  } else if (hasScript(scripts, "memory:dashboard:start")) {
-    console.log("- hint: pnpm memory:dashboard:start");
+  if (hasDashboardScript) {
+    ok.push("Dashboard script available");
+    if (manageSh) ok.push("manage.sh found — use: ./manage.sh memory start");
+    if (managePs1) ok.push("manage.ps1 found");
+  } else {
+    if (missingCore.length > 0) {
+      // Will be fixed by inject-runtime
+    } else {
+      warnings.push({
+        label: "Dashboard script (memory:dashboard:web) not available",
+        fix: `node "${memoryOpsSelf}" inject-runtime --repo-root "${repoRoot}" --force-runtime-inject`,
+      });
+    }
   }
 
+  // --- Print results ---
+  if (ok.length > 0) {
+    console.log(`\n✅ OK (${ok.length}):`);
+    for (const msg of ok) console.log(`   ✓ ${msg}`);
+  }
+
+  if (warnings.length > 0) {
+    console.log(`\n⚠️  WARN (${warnings.length}):`);
+    for (const w of warnings) {
+      console.log(`   ⚠ ${w.label}`);
+      console.log(`     → ${w.fix}`);
+    }
+  }
+
+  if (issues.length > 0) {
+    console.log(`\n❌ FAIL (${issues.length}):`);
+    for (const issue of issues) {
+      console.log(`   ✗ ${issue.label}`);
+      console.log(`     fix: ${issue.fix}`);
+    }
+  }
+
+  // --- Auto-fix ---
+  const fixableIssues = [...issues, ...warnings].filter((i) => i.autoFixable);
+  if (fixableIssues.length > 0 && autoFix) {
+    console.log("\n🔧 Auto-fix: injecting runtime pack...");
+    const result = await injectRuntime({ repoRoot, forceInject: true });
+    if (result.injected) {
+      console.log(`   ✓ Injected: ${result.copiedScripts} scripts copied, package.json ${result.changedPackage ? "updated" : "unchanged"}`);
+      if (result.installCode && result.installCode !== 0) {
+        console.log(`   ✗ pnpm install failed (code=${result.installCode}). Run manually: cd "${repoRoot}" && pnpm install`);
+        return result.installCode;
+      }
+      console.log("   ✓ Auto-fix complete. Run doctor again to verify.");
+    } else {
+      console.log(`   ✗ Injection failed: ${result.reason}`);
+    }
+  } else if (fixableIssues.length > 0 && !autoFix) {
+    console.log(`\n💡 Run with --fix to auto-repair ${fixableIssues.length} issue(s):`);
+    console.log(`   node "${memoryOpsSelf}" doctor --repo-root "${repoRoot}" --fix`);
+  }
+
+  // --- Audit ---
+  const refreshedPkg = await readPackageJson(repoRoot);
+  const refreshedScripts = packageScripts(refreshedPkg);
   const env = envForMemory(memoryRoot, workspaceRoot);
-  if (hasScript(scripts, "memory:audit")) {
-    console.log("\nAudit:");
+  if (hasScript(refreshedScripts, "memory:audit")) {
+    console.log("\n📋 Running audit...");
     const res = await runPnpmScript(repoRoot, "memory:audit", [], env);
-    console.log(`- audit exit code: ${res.code} (0 clean, 1 stale-only, 2 severe)`);
-    return res.code === 2 ? 2 : 0;
+    if (res.code === 0) console.log("   ✓ Audit clean");
+    else if (res.code === 1) console.log("   ⚠ Audit: stale items found");
+    else if (res.code === 2) { console.log("   ✗ Audit: severe issues"); return 2; }
   }
 
-  return 0;
+  // --- Summary ---
+  const total = issues.length + warnings.length;
+  console.log(`\n${"═".repeat(40)}`);
+  if (issues.length === 0 && warnings.length === 0) {
+    console.log("🎉 All checks passed! Memory system is healthy.");
+  } else if (issues.length === 0) {
+    console.log(`✅ No critical issues. ${warnings.length} warning(s) — see above.`);
+  } else {
+    console.log(`❌ ${issues.length} critical issue(s), ${warnings.length} warning(s).`);
+    console.log(`   Fix critical issues before running memory pipeline.`);
+  }
+
+  return issues.length > 0 ? 1 : 0;
 }
 
 async function main() {
