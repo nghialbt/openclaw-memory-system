@@ -664,8 +664,8 @@ async function doctor(repoRoot, args, scripts) {
     ok.push(`AI triage auth: ${envKey ? "env key" : "config/gateway"}`);
   } else {
     warnings.push({
-      label: "No AI triage auth found (no key in env/config and no gateway token)",
-      fix: "Optional: set GEMINI_API_KEY or start OpenClaw Gateway for AI triage.",
+      label: "No AI triage auth found (Gateway is not configured and no API key found)",
+      fix: "Start OpenClaw Gateway (preferred) OR set GEMINI_API_KEY in your env/config.",
     });
   }
 

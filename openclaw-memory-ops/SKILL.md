@@ -74,5 +74,5 @@ Default URL: [http://127.0.0.1:3903/](http://127.0.0.1:3903/)
 
 ## ⚠️ Notes
 - If `memory:*` scripts are missing in `package.json`, always run `doctor --fix` first.
-- Triage will be skipped automatically if no AI key is found.
+- **AI Triage** requires OpenClaw Gateway or an API Key. It will fail fast (exit 2) if no auth is found to ensure memory integrity.
 - Cron jobs will be skipped if `openclaw` CLI is not in PATH.

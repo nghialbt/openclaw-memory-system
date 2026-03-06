@@ -385,14 +385,14 @@ async function resolveAuthConfig(args: Record<string, string | boolean>): Promis
   }
 
   throw new Error(
-    `No valid authentication found (no GEMINI_API_KEY and no OpenClaw Gateway token in ${configPath}).`,
+    `No valid authentication found for AI triage. Please ensure the OpenClaw Gateway is running OR set GEMINI_API_KEY in your environment/config (${configPath}).`,
   );
 }
 
 function parseGeminiModelId(modelRef: string): string {
   const trimmed = modelRef.trim();
   if (!trimmed) {
-    return "gemini-3-flash-preview";
+    return "gemini-3.1-pro-high";
   }
   if (trimmed.startsWith("google/")) {
     return trimmed.slice("google/".length);
