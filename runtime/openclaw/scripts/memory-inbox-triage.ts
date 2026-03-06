@@ -318,10 +318,26 @@ async function readKeyFromOpenClawConfig(configPath: string): Promise<string> {
 }
 
 type AuthConfig =
-  | { type: "gemini"; key: string; baseUrl: string; source: string }
-  | { type: "gateway"; url: string; token: string; source: string };
+  | { type: "gemini"; key: string; baseUrl: string; source: string; defaultModel?: string }
+  | { type: "gateway"; url: string; token: string; source: string; defaultModel?: string };
 
 async function resolveAuthConfig(args: Record<string, string | boolean>): Promise<AuthConfig> {
+  const configPath = resolveOpenClawConfigPath(args);
+  let defaultModelFromConfig: string | undefined;
+  let parsedConfig: RawObject | null = null;
+
+  if (existsSync(configPath)) {
+    try {
+      parsedConfig = asObject(JSON.parse(await readFile(configPath, "utf8")));
+      const agents = asObject(parsedConfig?.agents);
+      const defaults = asObject(agents?.defaults);
+      const model = asObject(defaults?.model);
+      defaultModelFromConfig = asString(model?.primary) ?? undefined;
+    } catch {
+      // ignore parse errors
+    }
+  }
+
   // 1. Try environment variables for direct Gemini API
   const envKey = process.env.GEMINI_API_KEY?.trim() || process.env.GOOGLE_API_KEY?.trim() || "";
   if (envKey.length > 0) {
@@ -333,43 +349,38 @@ async function resolveAuthConfig(args: Record<string, string | boolean>): Promis
           ? args["google-base-url"].trim() || DEFAULT_GOOGLE_BASE_URL
           : DEFAULT_GOOGLE_BASE_URL,
       source: "env",
+      defaultModel: defaultModelFromConfig,
     };
   }
 
   // 2. Try OpenClaw config
-  const configPath = resolveOpenClawConfigPath(args);
-  if (existsSync(configPath)) {
-    try {
-      const raw = await readFile(configPath, "utf8");
-      const root = asObject(JSON.parse(raw));
+  if (parsedConfig) {
+    // 2a. Check for API key in config env
+    const env = asObject(parsedConfig.env);
+    const configKey = asString(env?.GEMINI_API_KEY) ?? asString(env?.GOOGLE_API_KEY) ?? "";
+    if (configKey.length > 0) {
+      return {
+        type: "gemini",
+        key: configKey,
+        baseUrl: DEFAULT_GOOGLE_BASE_URL,
+        source: `config:${configPath}`,
+        defaultModel: defaultModelFromConfig,
+      };
+    }
 
-      // 2a. Check for API key in config env
-      const env = asObject(root?.env);
-      const configKey = asString(env?.GEMINI_API_KEY) ?? asString(env?.GOOGLE_API_KEY) ?? "";
-      if (configKey.length > 0) {
-        return {
-          type: "gemini",
-          key: configKey,
-          baseUrl: DEFAULT_GOOGLE_BASE_URL,
-          source: `config:${configPath}`,
-        };
-      }
-
-      // 2b. Check for Gateway configuration
-      const gateway = asObject(root?.gateway);
-      const port = Number(gateway?.port) || 18789;
-      const auth = asObject(gateway?.auth);
-      const token = asString(auth?.token) || "";
-      if (token.length > 0) {
-        return {
-          type: "gateway",
-          url: `http://127.0.0.1:${port}`,
-          token,
-          source: `gateway:${configPath}`,
-        };
-      }
-    } catch {
-      // ignore parse errors and proceed to fallback
+    // 2b. Check for Gateway configuration
+    const gateway = asObject(parsedConfig.gateway);
+    const port = Number(gateway?.port) || 18789;
+    const auth = asObject(gateway?.auth);
+    const token = asString(auth?.token) || "";
+    if (token.length > 0) {
+      return {
+        type: "gateway",
+        url: `http://127.0.0.1:${port}`,
+        token,
+        source: `gateway:${configPath}`,
+        defaultModel: defaultModelFromConfig,
+      };
     }
   }
 
@@ -470,7 +481,7 @@ async function decideWithModel(params: {
     endpoint = `${params.auth.url.replace(/\/$/, "")}/v1/chat/completions`;
     headers["Authorization"] = `Bearer ${params.auth.token}`;
     payload = {
-      model: params.modelRef.includes("/") ? params.modelRef : `google-antigravity/${params.modelRef}`,
+      model: params.modelRef,
       messages: [{ role: "user", content: prompt }],
       temperature: 0,
       response_format: { type: "json_object" },
@@ -570,12 +581,12 @@ async function main() {
   const nowIso = new Date().toISOString();
   const highThreshold = parseThreshold(args["high-threshold"], 80);
   const pendingThreshold = Math.min(highThreshold, parseThreshold(args["pending-threshold"], 45));
-  const modelRef =
-    typeof args.model === "string"
-      ? args.model.trim() || DEFAULT_TRIAGE_MODEL
-      : DEFAULT_TRIAGE_MODEL;
 
   const auth = await resolveAuthConfig(args);
+  const modelRef =
+    (typeof args.model === "string" ? args.model.trim() : null) ||
+    auth.defaultModel ||
+    DEFAULT_TRIAGE_MODEL;
   const memoryRoot = resolve(resolveMemoryRoot(args));
   const inboxDir = resolve(memoryRoot, "inbox");
   const archiveDir = resolve(inboxDir, "archive");
