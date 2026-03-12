@@ -1,6 +1,6 @@
 #!/usr/bin/env -S node --import tsx
 
-import { existsSync } from "node:fs";
+import { existsSync, readFileSync } from "node:fs";
 import { readdir, readFile } from "node:fs/promises";
 import { homedir } from "node:os";
 import { resolve } from "node:path";
@@ -65,7 +65,7 @@ type ModelDecision = {
   reason?: string;
 };
 
-const DEFAULT_TRIAGE_MODEL = "google/gemini-3-flash-preview";
+// Default model will be resolved from openclaw.json if not provided via CLI
 const DEFAULT_GOOGLE_BASE_URL = "https://generativelanguage.googleapis.com/v1beta";
 const DEFAULT_OPENCLAW_CONFIG_PATH = resolve(homedir(), ".openclaw-ytb", "openclaw.json");
 
@@ -336,6 +336,28 @@ async function resolveGoogleApiKey(
   );
 }
 
+function readTriageModelFromConfig(configPath: string): string {
+  if (!existsSync(configPath)) {
+    return "";
+  }
+  let parsed: unknown;
+  try {
+    parsed = JSON.parse(readFileSync(configPath, "utf8"));
+  } catch {
+    return "";
+  }
+  const root = asObject(parsed);
+  const env = asObject(root?.env);
+  const override = asString(env?.MEMORY_TRIAGE_MODEL) ?? "";
+  if (override) {
+    return override;
+  }
+  const agents = asObject(root?.agents);
+  const defaults = asObject(agents?.defaults);
+  const model = asObject(defaults?.model);
+  return asString(model?.primary) ?? "";
+}
+
 function parseGeminiModelId(modelRef: string): string {
   const trimmed = modelRef.trim();
   if (!trimmed) {
@@ -374,7 +396,7 @@ function parseDecisionJson(text: string): RawObject | null {
   try {
     const parsed = JSON.parse(direct);
     return asObject(parsed);
-  } catch {}
+  } catch { }
 
   const match = /{[\s\S]*}/.exec(direct);
   if (!match) {
@@ -518,10 +540,17 @@ async function main() {
   const nowIso = new Date().toISOString();
   const highThreshold = parseThreshold(args["high-threshold"], 80);
   const pendingThreshold = Math.min(highThreshold, parseThreshold(args["pending-threshold"], 45));
+  const openclawConfigPath = resolveOpenClawConfigPath(args);
+  const configuredDefaultModel = readTriageModelFromConfig(openclawConfigPath);
   const modelRef =
     typeof args.model === "string"
-      ? args.model.trim() || DEFAULT_TRIAGE_MODEL
-      : DEFAULT_TRIAGE_MODEL;
+      ? args.model.trim() || configuredDefaultModel
+      : configuredDefaultModel;
+  if (!modelRef) {
+    throw new Error(
+      `Missing triage model. Set env.MEMORY_TRIAGE_MODEL or agents.defaults.model.primary in ${openclawConfigPath}, or pass --model.`,
+    );
+  }
   const googleBaseUrl =
     typeof args["google-base-url"] === "string"
       ? args["google-base-url"].trim() || DEFAULT_GOOGLE_BASE_URL

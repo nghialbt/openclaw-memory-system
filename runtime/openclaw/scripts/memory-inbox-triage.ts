@@ -332,7 +332,10 @@ async function resolveAuthConfig(args: Record<string, string | boolean>): Promis
       const agents = asObject(parsedConfig?.agents);
       const defaults = asObject(agents?.defaults);
       const model = asObject(defaults?.model);
-      defaultModelFromConfig = asString(model?.primary) ?? undefined;
+      const agentsDefault = asString(model?.primary) ?? undefined;
+      const env = asObject(parsedConfig?.env);
+      const triageOverride = asString(env?.MEMORY_TRIAGE_MODEL) ?? undefined;
+      defaultModelFromConfig = triageOverride || agentsDefault;
     } catch {
       // ignore parse errors
     }
@@ -589,7 +592,7 @@ async function main() {
 
   if (!modelRef) {
     throw new Error(
-      "No model specified. Please provide --model or set a default model in openclaw.json (agents.defaults.model.primary)."
+      "No model specified. Please provide --model or set env.MEMORY_TRIAGE_MODEL or agents.defaults.model.primary in openclaw.json."
     );
   }
   const memoryRoot = resolve(resolveMemoryRoot(args));
